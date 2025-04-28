@@ -11,19 +11,20 @@
 #include <string>
 #include <sstream>
 #include <vector>
+#include <algorithm>
 using namespace std;
 
 struct Gaussian { //matches vertexShader input
 	Float3 pos;
 	Float4 col;
 	float cov[9];
+	//cov is symmetric, so only store necessary values as:
+	/* 0 1 2
+	*  - 3 4
+	*  - - 5
+	*/
 };
 vector<Gaussian> gaussians;
-
-void LoadGaussians(const char* file) {
-
-}
-
 
 namespace Window {
 	HINSTANCE hInst;
@@ -72,6 +73,86 @@ namespace Window {
 #define ASSERT(b) if(!(b)) { Window::Error(__FILE__, __LINE__, ""); }
 #define ASSERTMSG(b, m) if(!(b)) { Window::Error(__FILE__, __LINE__, m); }
 #define HR(b) if(b!=S_OK) Window::HRError(b, __FILE__, __LINE__);
+
+namespace PLYLoader {
+	struct Gaussian_Ply { //must match the data order and sizes of the ply file
+		Float3 pos;
+		Float3 normal;
+		Float3 col;
+		Float3 sh[15];
+		float opacity;
+		Float3 scale;
+		Quaternion rot;
+	};
+	void load(const char* file) {
+		gaussians.clear();
+		//read gaussians
+		FILE* f;
+		fopen_s(&f, file, "r+b");
+		ASSERT(f);
+
+		char buf[256];
+		int i = 80;
+		while (--i > 0) {
+			fgets(buf, 256, f);
+			if (string(buf) == string("end_header\n")) break;
+		}
+
+		Gaussian_Ply gbuffer[200];
+		size_t read_total = 0;
+		size_t read = 0;
+
+		do {
+			read = fread(gbuffer, sizeof(Gaussian_Ply), 200, f);
+			read_total += read;
+			for (size_t i = 0; i < read; i++) {
+				//parse raw file data to desired format
+				Gaussian_Ply& raw = gbuffer[i];
+				Gaussian g;
+
+				//credit to https://github.com/antimatter15/splat/blob/main/main.js for how to interpret the raw data in the ply files, the data seems to be stored in very unintuitive ways.
+
+				//position
+				g.pos = raw.pos;
+
+				//exponentiate scales
+				Float3 scale = Float3(exp(raw.scale.x), exp(raw.scale.y), exp(raw.scale.z));
+
+				//normalize rotation
+				Quaternion q = raw.rot;
+				float qnorm = sqrt(q.w * q.w + q.u.dot(q.u));
+				q.w /= qnorm;
+				q.u /= qnorm;
+
+				//cov matrix
+				Matrix4 RS = Matrix4::RotationQuat(q) * Matrix4::Scaling(scale);
+				RS = RS * RS.T();
+				//cov is symmetric, so only store necessary values as:
+				/* 0 1 2
+				*  - 3 4
+				*  - - 5
+				*/
+				g.cov[0] = RS[0][0];
+				g.cov[1] = RS[0][1];
+				g.cov[2] = RS[0][2];
+				g.cov[3] = RS[1][0];
+				g.cov[4] = RS[1][1];
+				g.cov[5] = RS[1][2];
+				g.cov[6] = RS[2][0];
+				g.cov[7] = RS[2][1];
+				g.cov[8] = RS[2][2];
+
+				//color
+				const float SH_C0 = 0.28209479177387814; //why? idk.
+				Float3 col = gbuffer[i].col * SH_C0 + Float3(0.5f, 0.5f, 0.5f);
+				float alpha = 1.0 / (1.0 + exp(-raw.opacity));
+				g.col = Float4(col.x, col.y, col.z, alpha);
+
+				gaussians.push_back(g);
+			}
+		} while (read == 200);
+	}
+}
 
 namespace Camera {
 	Float3 pos;
@@ -173,12 +254,15 @@ namespace Graphics {
 		HR(pDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &vs));
 
 		//Create IED
-		D3D11_INPUT_ELEMENT_DESC ied_desc[2] = {
-			{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT      , 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		D3D11_INPUT_ELEMENT_DESC ied_desc[5] = {
+			{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT   , 0, 0                           , D3D11_INPUT_PER_VERTEX_DATA, 0 },
 			{ "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+			{ "MATRIX",   0, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+			{ "MATRIX",   1, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+			{ "MATRIX",   2, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 		};
 		
-		HR(pDevice->CreateInputLayout(ied_desc, 2, pBlob->GetBufferPointer(), pBlob->GetBufferSize(), &il));
+		HR(pDevice->CreateInputLayout(ied_desc, 5, pBlob->GetBufferPointer(), pBlob->GetBufferSize(), &il));
 
 		//Compile Geometery Shader
 		HR(D3DCompileFromFile(L"GS_Shaders.hlsl", nullptr, nullptr, "geometryShader", "gs_5_0", 0, 0, &pBlob, &errorBlob));
@@ -189,17 +273,12 @@ namespace Graphics {
 		HR(pDevice->CreatePixelShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &ps));
 
 		//Create VBuffer
-		float vdata[] = {
-			-2.0f, -2.0f, 15.0f,		 1.0f, 0.0f, 0.0f, 1.0f,
-			 2.0f,  2.0f, 15.0f,		 0.0f, 1.0f, 0.0f, 1.0f,
-			 2.0f, -2.0f, 15.0f,		 0.0f, 0.0f, 1.0f, 1.0f,
-		};
 		D3D11_BUFFER_DESC vdesc = {};
-		vdesc.ByteWidth = sizeof(vdata);
+		vdesc.ByteWidth = gaussians.size() * sizeof(Gaussian);
 		vdesc.Usage = D3D11_USAGE_IMMUTABLE;
 		vdesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
 		D3D11_SUBRESOURCE_DATA subdata = {};
-		subdata.pSysMem = vdata;
+		subdata.pSysMem = &gaussians[0];
 		pDevice->CreateBuffer(&vdesc, &subdata, &vBuffer);
 
 		//Create ConstBuffer
@@ -259,7 +338,7 @@ namespace Graphics {
 		//Bind Stuff
 		pContext->IASetInputLayout(il);
 		pContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_POINTLIST);
-		UINT stride = 7 * sizeof(float);
+		UINT stride = sizeof(Gaussian);
 		UINT offset = 0;
 		pContext->IASetVertexBuffers(0, 1, &vBuffer, &stride, &offset);
 
@@ -268,7 +347,7 @@ namespace Graphics {
 		pContext->GSSetShader(gs, nullptr, 0u);
 		pContext->PSSetShader(ps, nullptr, 0u);
 
-		pContext->Draw(3u, 0u);
+		pContext->Draw(gaussians.size(), 0u);
 
 		//Present
 		Graphics::pSwapChain->Present(0u, 0u);
@@ -277,7 +356,9 @@ namespace Graphics {
 	}
 }
 
-
+bool compareGauss(const Gaussian& a, const Gaussian& b) {
+	return a.pos.z > b.pos.z;
+}
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 	switch (msg) {
@@ -351,6 +432,9 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	ASSERT(Window::hWnd != nullptr);
 	ShowWindow(Window::hWnd, SW_NORMAL);
 	ASSERT(UpdateWindow(Window::hWnd));
+
+	PLYLoader::load("guitar.ply");
+	sort(gaussians.begin(), gaussians.end(), compareGauss);
 
 	Graphics::Init();
 
