@@ -241,6 +241,13 @@ public:
 			Float4(-sin(ang), 0.0f, cos(ang), 0.0f),
 			Float4(0.0f, 0.0f, 0.0f, 1.0f));
 	}
+	static Matrix4 RotationZ(float ang) {
+		return Matrix4(
+			Float4(cos(ang), -sin(ang), 0.0f, 0.0f),
+			Float4(sin(ang), cos(ang), 0.0f, 0.0f),
+			Float4(0.0f, 0.0f, 1.0f, 0.0f),
+			Float4(0.0f, 0.0f, 0.0f, 1.0f));
+	}
 	static Matrix4 RotationQuat(const Quaternion& q) {
 		return Matrix4(
 			Float4(1.0f - 2.0f * (q.u.y * q.u.y + q.u.z * q.u.z), 2.0f * (q.u.x * q.u.y - q.u.z * q.w), 2.0f * (q.u.x * q.u.z + q.u.y * q.w), 0.0f),
@@ -252,4 +259,18 @@ public:
 	Float4 operator * (const Float4& v) const { return mul(v); }
 	Float3 operator * (const Float3& v) const { return mul(v); }
 	Matrix4 operator * (const Matrix4& m) const { return mul(m); }
+};
+
+class Matrix3 {
+public:
+	Float3 r1;
+	Float3 r2;
+	Float3 r3;
+
+	Matrix3(const Matrix4& o) :
+		r1(o.r1.x, o.r1.y, o.r1.z),
+		r2(o.r2.x, o.r2.y, o.r2.z),
+		r3(o.r3.x, o.r3.y, o.r3.z)
+	{}
+	Matrix3() {}
 };

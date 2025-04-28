@@ -17,11 +17,13 @@ using namespace std;
 struct Gaussian { //matches vertexShader input
 	Float3 pos;
 	Float4 col;
-	float cov[9];
-	//cov is symmetric, so only store necessary values as:
-	/* 0 1 2
-	*  - 3 4
-	*  - - 5
+	Float3 cov0;
+	Float3 cov1;
+	//cov matrix symetric, so only need to store 6 values as below. stored in cov0,cov1
+	/*
+	0 1 2
+	- 3 4
+	- - 5
 	*/
 };
 vector<Gaussian> gaussians;
@@ -86,6 +88,7 @@ namespace PLYLoader {
 	};
 	void load(const char* file) {
 		gaussians.clear();
+
 		//read gaussians
 		FILE* f;
 		fopen_s(&f, file, "r+b");
@@ -113,7 +116,7 @@ namespace PLYLoader {
 				//credit to https://github.com/antimatter15/splat/blob/main/main.js for how to interpret the raw data in the ply files, the data seems to be stored in very unintuitive ways.
 
 				//position
-				g.pos = raw.pos;
+				g.pos = Float3(raw.pos.x, -raw.pos.y, raw.pos.z);
 
 				//exponentiate scales
 				Float3 scale = Float3(exp(raw.scale.x), exp(raw.scale.y), exp(raw.scale.z));
@@ -127,20 +130,8 @@ namespace PLYLoader {
 				//cov matrix
 				Matrix4 RS = Matrix4::RotationQuat(q) * Matrix4::Scaling(scale);
 				RS = RS * RS.T();
-				//cov is symmetric, so only store necessary values as:
-				/* 0 1 2
-				*  - 3 4
-				*  - - 5
-				*/
-				g.cov[0] = RS[0][0];
-				g.cov[1] = RS[0][1];
-				g.cov[2] = RS[0][2];
-				g.cov[3] = RS[1][0];
-				g.cov[4] = RS[1][1];
-				g.cov[5] = RS[1][2];
-				g.cov[6] = RS[2][0];
-				g.cov[7] = RS[2][1];
-				g.cov[8] = RS[2][2];
+				g.cov0 = Float3(RS[0][0], RS[0][1], RS[0][2]);
+				g.cov1 = Float3(RS[1][1], RS[1][2], RS[2][2]);
 
 				//color
 				const float SH_C0 = 0.28209479177387814; //why? idk.
@@ -184,6 +175,7 @@ namespace Graphics {
 	IDXGISwapChain* pSwapChain = nullptr;
 	ID3D11DeviceContext* pContext = nullptr;
 	ID3D11RenderTargetView* pTarget = nullptr;
+	ID3D11BlendState* pBlend = nullptr;
 	ID3DBlob* pBlob = nullptr;
 
 	//Shaders
@@ -250,19 +242,18 @@ namespace Graphics {
 		//Compile Vertex Shader
 		ID3DBlob* errorBlob = nullptr;
 		HR(D3DCompileFromFile(L"GS_Shaders.hlsl", nullptr, nullptr, "vertexShader", "vs_5_0", 0, 0, &pBlob, &errorBlob));
-		//TextBox((char*)errorBlob->GetBufferPointer());
+		//Window::TextBox((char*)errorBlob->GetBufferPointer());
 		HR(pDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &vs));
 
 		//Create IED
-		D3D11_INPUT_ELEMENT_DESC ied_desc[5] = {
+		D3D11_INPUT_ELEMENT_DESC ied_desc[4] = {
 			{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT   , 0, 0                           , D3D11_INPUT_PER_VERTEX_DATA, 0 },
 			{ "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-			{ "MATRIX",   0, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-			{ "MATRIX",   1, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-			{ "MATRIX",   2, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+			{ "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+			{ "TEXCOORD", 1, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 		};
 		
-		HR(pDevice->CreateInputLayout(ied_desc, 5, pBlob->GetBufferPointer(), pBlob->GetBufferSize(), &il));
+		HR(pDevice->CreateInputLayout(ied_desc, 4, pBlob->GetBufferPointer(), pBlob->GetBufferSize(), &il));
 
 		//Compile Geometery Shader
 		HR(D3DCompileFromFile(L"GS_Shaders.hlsl", nullptr, nullptr, "geometryShader", "gs_5_0", 0, 0, &pBlob, &errorBlob));
@@ -284,11 +275,33 @@ namespace Graphics {
 		//Create ConstBuffer
 		D3D11_BUFFER_DESC cdesc = {};
 		//ByteWidth must be a multiple of 16
-		cdesc.ByteWidth = 16 * sizeof(float);
+		cdesc.ByteWidth = 32 * sizeof(float);
 		cdesc.Usage = D3D11_USAGE_DYNAMIC;
 		cdesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 		cdesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		HR(pDevice->CreateBuffer(&cdesc, nullptr, &constBuffer));
+
+		//Create Blend State
+		/*D3D11_BLEND_DESC blenddesc = {};
+		blenddesc.RenderTarget[0].BlendEnable = TRUE;
+		blenddesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
+		blenddesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
+		blenddesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+		blenddesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA;
+		blenddesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_DEST_ALPHA;
+		blenddesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+		blenddesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+		HR(pDevice->CreateBlendState(&blenddesc, &pBlend));*/
+		D3D11_BLEND_DESC blenddesc = {};
+		blenddesc.RenderTarget[0].BlendEnable = TRUE;
+		blenddesc.RenderTarget[0].SrcBlend = D3D11_BLEND_INV_DEST_ALPHA;
+		blenddesc.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
+		blenddesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+		blenddesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_INV_DEST_ALPHA;
+		blenddesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+		blenddesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+		blenddesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+		HR(pDevice->CreateBlendState(&blenddesc, &pBlend));
 	}
 	void Resize() {
 		if (!pContext) return; //do nothing if called before Init
@@ -320,20 +333,28 @@ namespace Graphics {
 	}
 	void RenderGS() {
 		//Clear render target
-		const float color[] = { 0.0f , 0.0f , 0.0f, 1.0f };
+		const float color[] = { 0.0f , 0.0f , 0.0f, 0.0f };
 		Graphics::pContext->ClearRenderTargetView(Graphics::pTarget, color);
 
-		//Update ProjView matrix
-		Matrix4 Proj = Camera::Proj() * Camera::View();
-		Proj = Proj.T();
+		//Update constBuffer
+		struct cbuffer {
+			Matrix4 Proj; //no padding neccessary, already 16b alligned
+			Matrix4 View;
+		};
+
 		D3D11_MAPPED_SUBRESOURCE sub;
 		HR(pContext->Map(constBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &sub));
-		memcpy(sub.pData, &Proj, sizeof(Proj));
+
+		cbuffer* cbuf = (cbuffer*)sub.pData;
+		cbuf->Proj = Camera::Proj();
+		cbuf->View = Camera::View();
+
 		pContext->Unmap(constBuffer, 0);
 
 
 		//Set Render Target
 		pContext->OMSetRenderTargets(1u, &pTarget, nullptr);
+		pContext->OMSetBlendState(pBlend, NULL, 0xFFFFFF);
 
 		//Bind Stuff
 		pContext->IASetInputLayout(il);
@@ -357,7 +378,7 @@ namespace Graphics {
 }
 
 bool compareGauss(const Gaussian& a, const Gaussian& b) {
-	return a.pos.z > b.pos.z;
+	return a.pos.z < b.pos.z;
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
