@@ -169,6 +169,47 @@ namespace Camera {
 	}
 }
 
+namespace SortThread {
+	bool flagSorted = false;
+	bool flagExit = false;
+
+	struct ref {
+		int index;
+		float depth;
+	};
+
+	bool compareRef(const ref& a, const ref& b) {
+		return a.depth < b.depth;
+	}
+
+	DWORD entry(void*) {
+		vector<ref> refs(gaussians.size());
+		Gaussian* temp = new Gaussian[gaussians.size()];
+		while (!flagExit) {
+			if (!flagSorted) {
+				//compute depths and copy gaussians into temp
+				Matrix4 View = Camera::View();
+				for (int i = 0; i < gaussians.size(); i++) {
+					Float3 cam_pos = View * gaussians[i].pos;
+					refs[i].index = i;
+					refs[i].depth = cam_pos.z;
+					temp[i] = gaussians[i];
+				}
+				//sort refs
+				sort(refs.begin(), refs.end(), compareRef); //std::sort probably uses quickSort. a radix/counting sort would be faster but whatever
+
+				//move
+				for (int i = 0; i < gaussians.size(); i++) {
+					gaussians[i] = temp[refs[i].index];
+				}
+
+				flagSorted = true;
+			}
+		}
+		return 0;
+	}
+}
+
 //Graphics
 namespace Graphics {
 	ID3D11Device* pDevice = nullptr;
@@ -266,8 +307,9 @@ namespace Graphics {
 		//Create VBuffer
 		D3D11_BUFFER_DESC vdesc = {};
 		vdesc.ByteWidth = gaussians.size() * sizeof(Gaussian);
-		vdesc.Usage = D3D11_USAGE_IMMUTABLE;
+		vdesc.Usage = D3D11_USAGE_DYNAMIC;
 		vdesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+		vdesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 		D3D11_SUBRESOURCE_DATA subdata = {};
 		subdata.pSysMem = &gaussians[0];
 		pDevice->CreateBuffer(&vdesc, &subdata, &vBuffer);
@@ -282,16 +324,6 @@ namespace Graphics {
 		HR(pDevice->CreateBuffer(&cdesc, nullptr, &constBuffer));
 
 		//Create Blend State
-		/*D3D11_BLEND_DESC blenddesc = {};
-		blenddesc.RenderTarget[0].BlendEnable = TRUE;
-		blenddesc.RenderTarget[0].SrcBlend = D3D11_BLEND_SRC_ALPHA;
-		blenddesc.RenderTarget[0].DestBlend = D3D11_BLEND_INV_SRC_ALPHA;
-		blenddesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-		blenddesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_SRC_ALPHA;
-		blenddesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_DEST_ALPHA;
-		blenddesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-		blenddesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-		HR(pDevice->CreateBlendState(&blenddesc, &pBlend));*/
 		D3D11_BLEND_DESC blenddesc = {};
 		blenddesc.RenderTarget[0].BlendEnable = TRUE;
 		blenddesc.RenderTarget[0].SrcBlend = D3D11_BLEND_INV_DEST_ALPHA;
@@ -351,6 +383,18 @@ namespace Graphics {
 
 		pContext->Unmap(constBuffer, 0);
 
+		//Update vBuffer
+		if (SortThread::flagSorted) {
+			HR(pContext->Map(vBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &sub));
+
+			Gaussian* vbuf = (Gaussian*)sub.pData;
+			memcpy(vbuf, &gaussians[0], gaussians.size() * sizeof(Gaussian));
+			
+			pContext->Unmap(constBuffer, 0);
+
+			SortThread::flagSorted = false;
+		}
+
 
 		//Set Render Target
 		pContext->OMSetRenderTargets(1u, &pTarget, nullptr);
@@ -375,10 +419,6 @@ namespace Graphics {
 	}
 	void Clean() {
 	}
-}
-
-bool compareGauss(const Gaussian& a, const Gaussian& b) {
-	return a.pos.z < b.pos.z;
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
@@ -455,7 +495,11 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	ASSERT(UpdateWindow(Window::hWnd));
 
 	PLYLoader::load("point_cloud_bonsai.ply");
-	sort(gaussians.begin(), gaussians.end(), compareGauss);
+	
+	//create sorter and wait for it to sort
+	HANDLE sorter = CreateThread(NULL, 0, SortThread::entry, NULL, NULL, NULL);
+	ASSERT(sorter);
+	while (!SortThread::flagSorted) {}
 
 	Graphics::Init();
 
@@ -466,25 +510,28 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	while (MessagePump()) {
 		//Camera Movement
 		Float3 move;
-		if (Window::keyDown('W')) move.z += 0.1f;
-		if (Window::keyDown('S')) move.z -= 0.1f;
-		if (Window::keyDown('D')) move.x += 0.1f;
-		if (Window::keyDown('A')) move.x -= 0.1f;
-		if (Window::keyDown(VK_SHIFT)) move.y += 0.1f;
-		if (Window::keyDown(VK_CONTROL)) move.y -= 0.1f;
+		if (Window::keyDown('W')) move.z += 0.05f;
+		if (Window::keyDown('S')) move.z -= 0.05f;
+		if (Window::keyDown('D')) move.x += 0.05f;
+		if (Window::keyDown('A')) move.x -= 0.05f;
+		if (Window::keyDown(VK_SHIFT)) move.y -= 0.05f;
+		if (Window::keyDown(VK_CONTROL)) move.y += 0.05f;
 		Camera::pos += Matrix4::RotationY(-Camera::yaw) * Matrix4::RotationX(-Camera::pitch)* move;
 		//Camera Rotation
 		POINT lastPos = mousePos;
 		ASSERT(GetCursorPos(&mousePos));
 		if (Window::keyDown(VK_LBUTTON)) {
 			Camera::yaw += (float)(mousePos.x - lastPos.x) / 400.0f;
-			Camera::pitch += (float)(mousePos.y - lastPos.y) / 400.0f;
+			Camera::pitch -= (float)(mousePos.y - lastPos.y) / 400.0f;
 
 			if (Camera::pitch >  PI / 2.0f) Camera::pitch =  PI / 2.0f;
 			if (Camera::pitch < -PI / 2.0f) Camera::pitch = -PI / 2.0f;
 		}
+		//Render Frame
 		Graphics::RenderGS();
 	}
-	Window::TextBox("hi");
+	SortThread::flagExit = true;
+	WaitForSingleObject(sorter, INFINITE);
+
 	return 0;
 }

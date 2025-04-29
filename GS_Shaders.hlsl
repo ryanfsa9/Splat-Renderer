@@ -85,14 +85,14 @@ VOut vertexShader(VIn i)
     return o;
 }
 
-//Geometry Shader. Constructs oriented rectangles for each Gaussian based on output of vertexShader. spans 2 stddivs in each direction
+//Geometry Shader. Constructs oriented rectangles for each Gaussian based on output of vertexShader.
 [maxvertexcount(6)]
 void geometryShader(point VOut i_[1], inout TriangleStream<GOut> o)
 {
     VOut i = i_[0];
     GOut g1, g2, g3, g4;
-    float4 right = float4(i.majorAxis, 0.0f, 0.0f) * 4;
-    float4 up = float4(i.minorAxis, 0.0f, 0.0f) * 4;
+    float4 right = float4(i.majorAxis, 0.0f, 0.0f) * 3;
+    float4 up = float4(i.minorAxis, 0.0f, 0.0f) * 3;
     g1.pos = i.pos - right - up;
     g2.pos = i.pos - right + up;
     g3.pos = i.pos + right + up;
