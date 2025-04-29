@@ -44,32 +44,27 @@ VOut vertexShader(VIn i)
       i.cov0.y, i.cov1.x, i.cov1.y,
       i.cov0.z, i.cov1.y, i.cov1.z
     };
-    //project cov onto clip space
-    //row_major float3x3 J =
-    //{
-    //    Proj[0][0]/pos_cam.z, 0.0f,                  0.0f,
-    //    0.0f,                 Proj[1][1]/pos_cam.z,  0.0f,
-    //    -Proj[0][0] * pos_cam.x / pos_cam.z / pos_cam.z, Proj[1][1] * pos_cam.y / pos_cam.z / pos_cam.z, 0.0f
-    //};
-    row_major float3x3 J =
+    
+    row_major float3x3 J = //affine approximation of Proj at current point
     {
         Proj[0][0] / pos_cam.z, 0.0f, -Proj[0][0] * pos_cam.x / pos_cam.z / pos_cam.z,
         0.0f, Proj[1][1] / pos_cam.z, -Proj[1][1] * pos_cam.y / pos_cam.z / pos_cam.z,
         0.0f, 0.0f, 0.0f
     };
     
-    row_major float3x3 View3 =
+    row_major float3x3 View3 = //gets rid of translation component of View, just want rotation
     {
         View[0][0], View[0][1], View[0][2],
         View[1][0], View[1][1], View[1][2],
         View[2][0], View[2][1], View[2][2]
     };
+    //project cov onto clip space
     row_major float3x3 JV = mul(J, View3);
     row_major float3x3 cov2d = mul(JV, mul(cov, transpose(JV)));
     //now have 2x2 matrix representing the cov in clip space
     //this matrix represents a rotated ellipse, want to find the ellipses axes (the eigenvectors of cov2d). the eigenvalues are the lengths of the major and minor axes
     
-    //find eigenvalues
+    //find eigenvalues (derrived quadratic eq)
     float a = (cov2d[0][0] + cov2d[1][1]) / 2.0;
     float b = length(float2((cov2d[0][0] - cov2d[1][1]) / 2.0, cov2d[0][1]));
     float eigen1 = a + b;
@@ -78,7 +73,8 @@ VOut vertexShader(VIn i)
     //find an eigenvector of eigen1. this is major axis of the ellipse as eigen1 > eigen2
     float2 eigenVector = normalize(float2(cov2d[0][1], eigen1 - cov2d[0][0]));
         
-    //take sqrt to get standard deviation instead of var
+    //take sqrt to get standard deviation instead of var.
+    //min is to clamp extremely large gaussians that could result from the affine approx of J
     o.majorAxis = sqrt(min(eigen1, 1.0)) * eigenVector;
     o.minorAxis = sqrt(min(eigen2, 1.0)) * float2(-eigenVector.y, eigenVector.x);
     
