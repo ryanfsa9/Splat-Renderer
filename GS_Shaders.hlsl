@@ -45,18 +45,18 @@ VOut vertexShader(VIn i)
       i.cov0.z, i.cov1.y, i.cov1.z
     };
     //project cov onto clip space
-    row_major float3x3 J =
-    {
-        Proj[0][0]/pos_cam.z, 0.0f,                  0.0f,
-        0.0f,                 Proj[1][1]/pos_cam.z,  0.0f,
-        -Proj[0][0] * pos_cam.x / pos_cam.z / pos_cam.z, Proj[1][1] * pos_cam.y / pos_cam.z / pos_cam.z, 0.0f
-    };
     //row_major float3x3 J =
     //{
-    //    Proj[0][0] / pos_cam.z, 0.0f, -Proj[0][0] * pos_cam.x / pos_cam.z / pos_cam.z,
-    //    0.0f, Proj[1][1] / pos_cam.z, Proj[1][1] * pos_cam.y / pos_cam.z / pos_cam.z,
-    //    0.0f, 0.0f, 0.0f
+    //    Proj[0][0]/pos_cam.z, 0.0f,                  0.0f,
+    //    0.0f,                 Proj[1][1]/pos_cam.z,  0.0f,
+    //    -Proj[0][0] * pos_cam.x / pos_cam.z / pos_cam.z, Proj[1][1] * pos_cam.y / pos_cam.z / pos_cam.z, 0.0f
     //};
+    row_major float3x3 J =
+    {
+        Proj[0][0] / pos_cam.z, 0.0f, -Proj[0][0] * pos_cam.x / pos_cam.z / pos_cam.z,
+        0.0f, Proj[1][1] / pos_cam.z, -Proj[1][1] * pos_cam.y / pos_cam.z / pos_cam.z,
+        0.0f, 0.0f, 0.0f
+    };
     
     row_major float3x3 View3 =
     {
@@ -79,8 +79,8 @@ VOut vertexShader(VIn i)
     float2 eigenVector = normalize(float2(cov2d[0][1], eigen1 - cov2d[0][0]));
         
     //take sqrt to get standard deviation instead of var
-    o.majorAxis = sqrt(eigen1) * eigenVector;
-    o.minorAxis = sqrt(eigen2) * float2(-eigenVector.y, eigenVector.x);
+    o.majorAxis = sqrt(min(eigen1, 1.0)) * eigenVector;
+    o.minorAxis = sqrt(min(eigen2, 1.0)) * float2(-eigenVector.y, eigenVector.x);
     
     return o;
 }

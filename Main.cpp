@@ -116,7 +116,7 @@ namespace PLYLoader {
 				//credit to https://github.com/antimatter15/splat/blob/main/main.js for how to interpret the raw data in the ply files, the data seems to be stored in very unintuitive ways.
 
 				//position
-				g.pos = Float3(raw.pos.x, -raw.pos.y, raw.pos.z);
+				g.pos = raw.pos;
 
 				//exponentiate scales
 				Float3 scale = Float3(exp(raw.scale.x), exp(raw.scale.y), exp(raw.scale.z));
@@ -156,13 +156,13 @@ namespace Camera {
 	Matrix4 View() {
 		return Matrix4::RotationX(pitch) * Matrix4::RotationY(yaw) * Matrix4::Translation(-pos);
 	}
-	Matrix4 Proj() { //Coordinate space: Z forward, X right, Y up
+	Matrix4 Proj() { //Coordinate space: Z forward, X right, Y down
 		float h = 1.0f / tan(fov_y / 2.0f);
 		float w = h * Window::size.y / Window::size.x;
 		float r = farZ / (farZ - nearZ);
 		return Matrix4(
 			{ w, 0, 0, 0 },
-			{ 0, h, 0, 0 },
+			{ 0,-h, 0, 0 },
 			{ 0, 0, r, -r * nearZ },
 			{ 0, 0, 1, 0 }
 		);
@@ -454,7 +454,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE hPrevInstance, _
 	ShowWindow(Window::hWnd, SW_NORMAL);
 	ASSERT(UpdateWindow(Window::hWnd));
 
-	PLYLoader::load("guitar.ply");
+	PLYLoader::load("point_cloud_bonsai.ply");
 	sort(gaussians.begin(), gaussians.end(), compareGauss);
 
 	Graphics::Init();
