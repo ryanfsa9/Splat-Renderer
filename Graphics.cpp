@@ -31,6 +31,21 @@ ID3D11Device* pDevice = nullptr;
 IDXGISwapChain* pSwapChain = nullptr;
 ID3D11DeviceContext* pContext = nullptr;
 ID3D11RenderTargetView* pTarget = nullptr;
+ID3D11Buffer* cBuffer = nullptr;
+//Shaders
+namespace GS {
+	ID3D11InputLayout* il = nullptr;
+	ID3D11VertexShader* vs = nullptr;
+	ID3D11GeometryShader* gs = nullptr;
+	ID3D11PixelShader* ps = nullptr;
+	ID3D11BlendState* pBlend = nullptr;
+	ID3D11Buffer* vBuffer = nullptr;
+}
+namespace Mesh {
+	ID3D11InputLayout* il = nullptr;
+	ID3D11VertexShader* vs = nullptr;
+	ID3D11PixelShader* ps = nullptr;
+}
 
 void Graphics::InitGlobals() {
 	//Swap Chain Description
@@ -78,6 +93,57 @@ void Graphics::InitGlobals() {
 
 	//Create RenderTarget, Viewport
 	Resize();
+
+	//GS Shaders
+	//Compile Vertex Shader
+	ID3DBlob* pBlob = nullptr;
+	ID3DBlob* errorBlob = nullptr;
+	HR(D3DCompileFromFile(L"GS_Shaders.hlsl", nullptr, nullptr, "vertexShader", "vs_5_0", 0, 0, &pBlob, &errorBlob));
+	//Window::TextBox((char*)errorBlob->GetBufferPointer());
+	HR(pDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &GS::vs));
+
+	//Create IED
+	D3D11_INPUT_ELEMENT_DESC ied_desc[4] = {
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT   , 0, 0                           , D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "TEXCOORD", 1, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	};
+
+	HR(pDevice->CreateInputLayout(ied_desc, 4, pBlob->GetBufferPointer(), pBlob->GetBufferSize(), &GS::il));
+
+	//Compile Geometery Shader
+	HR(D3DCompileFromFile(L"GS_Shaders.hlsl", nullptr, nullptr, "geometryShader", "gs_5_0", 0, 0, &pBlob, &errorBlob));
+	HR(pDevice->CreateGeometryShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &GS::gs));
+
+	//Compile Pixel Shader
+	HR(D3DCompileFromFile(L"GS_Shaders.hlsl", nullptr, nullptr, "pixelShader", "ps_5_0", 0, 0, &pBlob, &errorBlob));
+	HR(pDevice->CreatePixelShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &GS::ps));
+
+	//Mesh Shaders
+
+	pBlob->Release();
+
+	//Create ConstBuffer
+	D3D11_BUFFER_DESC cdesc = {};
+	//ByteWidth must be a multiple of 16
+	cdesc.ByteWidth = 32 * sizeof(float);
+	cdesc.Usage = D3D11_USAGE_DYNAMIC;
+	cdesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	cdesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+	HR(pDevice->CreateBuffer(&cdesc, nullptr, &cBuffer));
+
+	//Create Blend State
+	D3D11_BLEND_DESC blenddesc = {};
+	blenddesc.RenderTarget[0].BlendEnable = TRUE;
+	blenddesc.RenderTarget[0].SrcBlend = D3D11_BLEND_INV_DEST_ALPHA;
+	blenddesc.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
+	blenddesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
+	blenddesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_INV_DEST_ALPHA;
+	blenddesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
+	blenddesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
+	blenddesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
+	HR(pDevice->CreateBlendState(&blenddesc, &GS::pBlend));
 }
 
 void Graphics::Resize() {
@@ -114,6 +180,14 @@ void Graphics::CleanGlobals() {
 	pContext->Release();
 	pSwapChain->Release();
 	pDevice->Release();
+	cBuffer->Release();
+
+	//GS
+	GS::pBlend->Release();
+	GS::il->Release();
+	GS::vs->Release();
+	GS::gs->Release();
+	GS::ps->Release();
 }
 
 //GS
@@ -227,7 +301,7 @@ namespace GS {
 					for (int i = 0; i < gaussians.size(); i++) {
 						Float3 cam_pos = View * gaussians[i].pos;
 						refs[i].index = i;
-						refs[i].depth = cam_pos.z;
+						refs[i].depth = cam_pos.dot(cam_pos);
 						temp[i] = gaussians[i];
 					}
 					//sort refs
@@ -245,17 +319,6 @@ namespace GS {
 			return 0;
 		}
 	}
-
-	//GS buffers and shaders
-	ID3D11BlendState* pBlend = nullptr;
-	//Shaders
-	ID3D11InputLayout* il = nullptr;
-	ID3D11VertexShader* vs = nullptr;
-	ID3D11GeometryShader* gs = nullptr;
-	ID3D11PixelShader* ps = nullptr;
-	//Buffers
-	ID3D11Buffer* vBuffer = nullptr;
-	ID3D11Buffer* cBuffer = nullptr;
 }	
 
 void GS::Init(const char* ply) {
@@ -267,33 +330,6 @@ void GS::Init(const char* ply) {
 	ASSERT(SortThread::thread);
 	while (!SortThread::flagSorted) {}
 
-	//Compile Vertex Shader
-	ID3DBlob* pBlob = nullptr;
-	ID3DBlob* errorBlob = nullptr;
-	HR(D3DCompileFromFile(L"GS_Shaders.hlsl", nullptr, nullptr, "vertexShader", "vs_5_0", 0, 0, &pBlob, &errorBlob));
-	//Window::TextBox((char*)errorBlob->GetBufferPointer());
-	HR(pDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &vs));
-
-	//Create IED
-	D3D11_INPUT_ELEMENT_DESC ied_desc[4] = {
-		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT   , 0, 0                           , D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "TEXCOORD", 1, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
-	};
-
-	HR(pDevice->CreateInputLayout(ied_desc, 4, pBlob->GetBufferPointer(), pBlob->GetBufferSize(), &il));
-
-	//Compile Geometery Shader
-	HR(D3DCompileFromFile(L"GS_Shaders.hlsl", nullptr, nullptr, "geometryShader", "gs_5_0", 0, 0, &pBlob, &errorBlob));
-	HR(pDevice->CreateGeometryShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &gs));
-
-	//Compile Pixel Shader
-	HR(D3DCompileFromFile(L"GS_Shaders.hlsl", nullptr, nullptr, "pixelShader", "ps_5_0", 0, 0, &pBlob, &errorBlob));
-	HR(pDevice->CreatePixelShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &ps));
-
-	pBlob->Release();
-
 	//Create VBuffer
 	D3D11_BUFFER_DESC vdesc = {};
 	vdesc.ByteWidth = gaussians.size() * sizeof(Gaussian);
@@ -303,27 +339,6 @@ void GS::Init(const char* ply) {
 	D3D11_SUBRESOURCE_DATA subdata = {};
 	subdata.pSysMem = &gaussians[0];
 	pDevice->CreateBuffer(&vdesc, &subdata, &vBuffer);
-
-	//Create ConstBuffer
-	D3D11_BUFFER_DESC cdesc = {};
-	//ByteWidth must be a multiple of 16
-	cdesc.ByteWidth = 32 * sizeof(float);
-	cdesc.Usage = D3D11_USAGE_DYNAMIC;
-	cdesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
-	cdesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
-	HR(pDevice->CreateBuffer(&cdesc, nullptr, &cBuffer));
-
-	//Create Blend State
-	D3D11_BLEND_DESC blenddesc = {};
-	blenddesc.RenderTarget[0].BlendEnable = TRUE;
-	blenddesc.RenderTarget[0].SrcBlend = D3D11_BLEND_INV_DEST_ALPHA;
-	blenddesc.RenderTarget[0].DestBlend = D3D11_BLEND_ONE;
-	blenddesc.RenderTarget[0].BlendOp = D3D11_BLEND_OP_ADD;
-	blenddesc.RenderTarget[0].SrcBlendAlpha = D3D11_BLEND_INV_DEST_ALPHA;
-	blenddesc.RenderTarget[0].DestBlendAlpha = D3D11_BLEND_ONE;
-	blenddesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
-	blenddesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
-	HR(pDevice->CreateBlendState(&blenddesc, &pBlend));
 
 	//Bind stuff
 	pContext->OMSetBlendState(pBlend, NULL, 0xFFFFFF);
@@ -371,7 +386,6 @@ void GS::Render() {
 		SortThread::flagSorted = false;
 	}
 
-
 	//Set Render Target
 	pContext->OMSetRenderTargets(1u, &pTarget, nullptr);
 
@@ -383,13 +397,7 @@ void GS::Render() {
 }
 
 void GS::Clean() {
-	pBlend->Release();
-	il->Release();
-	vs->Release();
-	gs->Release();
-	ps->Release();
 	vBuffer->Release();
-	cBuffer->Release();
 
 	SortThread::flagExit = true;
 	WaitForSingleObject(SortThread::thread, INFINITE);

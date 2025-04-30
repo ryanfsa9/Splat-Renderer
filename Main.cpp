@@ -43,6 +43,7 @@ void HRError(long hr, const char* file, int line) {
 		text << "\n[HRESULT Code]\n" << hr;
 
 		MessageBoxW(NULL, text.str().c_str(), L"ERROR:", MB_OK | MB_ICONERROR);
+		ExitProcess(-1); //bye bye
 	}
 void TextBox(const char* msg) {
 		MessageBoxA(NULL, msg, "Hello:", MB_ICONINFORMATION);
