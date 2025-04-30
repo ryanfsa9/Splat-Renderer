@@ -57,8 +57,8 @@ bool FileDialog(char* buf256) {
 	ofn.lpstrFile = buf256;
 	ofn.lpstrFile[0] = '\0';
 	ofn.nMaxFile = 256;
-	ofn.lpstrFilter = "All\0*.*\0Text\0*.TXT\0";
-	ofn.nFilterIndex = 1;
+	ofn.lpstrFilter = ".PLY\0*.PLY\0";
+	ofn.nFilterIndex = 0;
 	ofn.lpstrFileTitle = NULL;
 	ofn.nMaxFileTitle = 0;
 	ofn.lpstrInitialDir = NULL;
@@ -152,7 +152,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInst, _In_opt_ HINSTANCE hPrevInstance, _In_ 
 	window.hWnd = CreateWindowExW(
 		WS_EX_APPWINDOW | WS_EX_WINDOWEDGE,
 		L"MainWndClass",
-		L"GS Renderer :)",
+		L"Splat Renderer :)",
 		WS_OVERLAPPEDWINDOW,
 		CW_USEDEFAULT,
 		CW_USEDEFAULT,
