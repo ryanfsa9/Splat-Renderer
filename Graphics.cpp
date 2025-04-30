@@ -11,6 +11,8 @@
 #include <algorithm>
 using namespace std;
 
+#define RELEASE(x) { x->Release(); x = nullptr; }
+
 Matrix4 Camera::Proj() { //Coordinate space: Z forward, X right, Y down
 	float h = 1.0f / tan(fov_y / 2.0f);
 	float w = h * window.size.y / window.size.x;
@@ -32,19 +34,24 @@ IDXGISwapChain* pSwapChain = nullptr;
 ID3D11DeviceContext* pContext = nullptr;
 ID3D11RenderTargetView* pTarget = nullptr;
 ID3D11Buffer* cBuffer = nullptr;
-//Shaders
 namespace GS {
 	ID3D11InputLayout* il = nullptr;
 	ID3D11VertexShader* vs = nullptr;
 	ID3D11GeometryShader* gs = nullptr;
 	ID3D11PixelShader* ps = nullptr;
 	ID3D11BlendState* pBlend = nullptr;
+
 	ID3D11Buffer* vBuffer = nullptr;
 }
 namespace Mesh {
 	ID3D11InputLayout* il = nullptr;
 	ID3D11VertexShader* vs = nullptr;
 	ID3D11PixelShader* ps = nullptr;
+	ID3D11BlendState* pBlend = nullptr;
+	ID3D11DepthStencilView* zBuffer = nullptr;
+
+	ID3D11Buffer* vBuffer = nullptr;
+	ID3D11Buffer* iBuffer = nullptr;
 }
 
 void Graphics::InitGlobals() {
@@ -94,23 +101,23 @@ void Graphics::InitGlobals() {
 	//Create RenderTarget, Viewport
 	Resize();
 
-	//GS Shaders
+	//===========================GS Shaders===========================
 	//Compile Vertex Shader
 	ID3DBlob* pBlob = nullptr;
 	ID3DBlob* errorBlob = nullptr;
 	HR(D3DCompileFromFile(L"GS_Shaders.hlsl", nullptr, nullptr, "vertexShader", "vs_5_0", 0, 0, &pBlob, &errorBlob));
-	//Window::TextBox((char*)errorBlob->GetBufferPointer());
+	//TextBox((char*)errorBlob->GetBufferPointer());
 	HR(pDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &GS::vs));
 
 	//Create IED
-	D3D11_INPUT_ELEMENT_DESC ied_desc[4] = {
+	D3D11_INPUT_ELEMENT_DESC gs_ied[4] = {
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT   , 0, 0                           , D3D11_INPUT_PER_VERTEX_DATA, 0 },
 		{ "COLOR",    0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 		{ "TEXCOORD", 0, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 		{ "TEXCOORD", 1, DXGI_FORMAT_R32G32B32_FLOAT   , 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 	};
 
-	HR(pDevice->CreateInputLayout(ied_desc, 4, pBlob->GetBufferPointer(), pBlob->GetBufferSize(), &GS::il));
+	HR(pDevice->CreateInputLayout(gs_ied, 4, pBlob->GetBufferPointer(), pBlob->GetBufferSize(), &GS::il));
 
 	//Compile Geometery Shader
 	HR(D3DCompileFromFile(L"GS_Shaders.hlsl", nullptr, nullptr, "geometryShader", "gs_5_0", 0, 0, &pBlob, &errorBlob));
@@ -120,20 +127,35 @@ void Graphics::InitGlobals() {
 	HR(D3DCompileFromFile(L"GS_Shaders.hlsl", nullptr, nullptr, "pixelShader", "ps_5_0", 0, 0, &pBlob, &errorBlob));
 	HR(pDevice->CreatePixelShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &GS::ps));
 
-	//Mesh Shaders
+	//=======================Mesh Shaders=========================
+	//Compile Vertex Shader
+	HR(D3DCompileFromFile(L"Mesh_Shaders.hlsl", nullptr, nullptr, "vertexShader", "vs_5_0", 0, 0, &pBlob, &errorBlob));
+	//TextBox((char*)errorBlob->GetBufferPointer());
+	HR(pDevice->CreateVertexShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &Mesh::vs));
 
-	pBlob->Release();
+	//Create IED
+	D3D11_INPUT_ELEMENT_DESC mesh_ied[2] = {
+		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0                           , D3D11_INPUT_PER_VERTEX_DATA, 0 },
+		{ "COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	};
+
+	HR(pDevice->CreateInputLayout(mesh_ied, 2, pBlob->GetBufferPointer(), pBlob->GetBufferSize(), &Mesh::il));
+
+	//Compile Pixel Shader
+	HR(D3DCompileFromFile(L"Mesh_Shaders.hlsl", nullptr, nullptr, "pixelShader", "ps_5_0", 0, 0, &pBlob, &errorBlob));
+	HR(pDevice->CreatePixelShader(pBlob->GetBufferPointer(), pBlob->GetBufferSize(), nullptr, &Mesh::ps));
+
+	RELEASE(pBlob);
 
 	//Create ConstBuffer
 	D3D11_BUFFER_DESC cdesc = {};
-	//ByteWidth must be a multiple of 16
-	cdesc.ByteWidth = 32 * sizeof(float);
+	cdesc.ByteWidth = 32 * sizeof(float); //ByteWidth must be a multiple of 16
 	cdesc.Usage = D3D11_USAGE_DYNAMIC;
 	cdesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
 	cdesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
 	HR(pDevice->CreateBuffer(&cdesc, nullptr, &cBuffer));
 
-	//Create Blend State
+	//Create Blend States
 	D3D11_BLEND_DESC blenddesc = {};
 	blenddesc.RenderTarget[0].BlendEnable = TRUE;
 	blenddesc.RenderTarget[0].SrcBlend = D3D11_BLEND_INV_DEST_ALPHA;
@@ -144,6 +166,9 @@ void Graphics::InitGlobals() {
 	blenddesc.RenderTarget[0].BlendOpAlpha = D3D11_BLEND_OP_ADD;
 	blenddesc.RenderTarget[0].RenderTargetWriteMask = D3D11_COLOR_WRITE_ENABLE_ALL;
 	HR(pDevice->CreateBlendState(&blenddesc, &GS::pBlend));
+
+	blenddesc.RenderTarget[0].BlendEnable = FALSE;
+	HR(pDevice->CreateBlendState(&blenddesc, &Mesh::pBlend));
 }
 
 void Graphics::Resize() {
@@ -153,7 +178,7 @@ void Graphics::Resize() {
 	pContext->OMSetRenderTargets(0, 0, 0);
 
 	//If Render Target Exists, Release It (or ResizeBuffers will fail)
-	if (pTarget) pTarget->Release();
+	if (pTarget) RELEASE(pTarget);
 
 	//Resize Swapchain
 	HR(pSwapChain->ResizeBuffers(0, window.size.x, window.size.y, DXGI_FORMAT_B8G8R8A8_UNORM, 0));
@@ -162,7 +187,7 @@ void Graphics::Resize() {
 	ID3D11Resource* pBackBuffer;
 	HR(pSwapChain->GetBuffer(0u, __uuidof(ID3D11Resource), (void**)&pBackBuffer));
 	HR(pDevice->CreateRenderTargetView(pBackBuffer, nullptr, &pTarget));
-	pBackBuffer->Release();
+	RELEASE(pBackBuffer);
 
 	//Set Viewport
 	D3D11_VIEWPORT vp;
@@ -173,21 +198,51 @@ void Graphics::Resize() {
 	vp.TopLeftX = 0;
 	vp.TopLeftY = 0;
 	pContext->RSSetViewports(1, &vp);
+
+	//Resize mesh renderer zBuffer
+	if (Mesh::zBuffer) RELEASE(Mesh::zBuffer);
+
+	D3D11_TEXTURE2D_DESC depthTextureDesc;
+	ZeroMemory(&depthTextureDesc, sizeof(depthTextureDesc));
+	depthTextureDesc.Width = window.size.x;
+	depthTextureDesc.Height = window.size.y;
+	depthTextureDesc.MipLevels = 1;
+	depthTextureDesc.ArraySize = 1;
+	depthTextureDesc.SampleDesc.Count = 1;
+	depthTextureDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	depthTextureDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+
+	ID3D11Texture2D* DepthTexture;
+	HR(pDevice->CreateTexture2D(&depthTextureDesc, nullptr, &DepthTexture));
+
+	D3D11_DEPTH_STENCIL_VIEW_DESC dsvDesc = {};
+	dsvDesc.Format = depthTextureDesc.Format;
+	dsvDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2DMS;
+	HR(pDevice->CreateDepthStencilView(DepthTexture, &dsvDesc, &Mesh::zBuffer));
+
+	RELEASE(DepthTexture);
 }
 
 void Graphics::CleanGlobals() {
-	pTarget->Release();
-	pContext->Release();
-	pSwapChain->Release();
-	pDevice->Release();
-	cBuffer->Release();
+	RELEASE(pTarget);
+	RELEASE(pContext);
+	RELEASE(pSwapChain);
+	RELEASE(pDevice);
+	RELEASE(cBuffer);
 
 	//GS
-	GS::pBlend->Release();
-	GS::il->Release();
-	GS::vs->Release();
-	GS::gs->Release();
-	GS::ps->Release();
+	RELEASE(GS::pBlend);
+	RELEASE(GS::il);
+	RELEASE(GS::vs);
+	RELEASE(GS::gs);
+	RELEASE(GS::ps);
+
+	//Mesh
+	RELEASE(Mesh::pBlend);
+	RELEASE(Mesh::il);
+	RELEASE(Mesh::vs);
+	RELEASE(Mesh::ps);
+	RELEASE(Mesh::zBuffer);
 }
 
 //GS
@@ -206,7 +261,7 @@ namespace GS {
 	};
 	vector<Gaussian> gaussians;
 
-	namespace GSLoader {
+	namespace PLYLoader {
 		struct Gaussian_Ply { //must match the data order and sizes of the ply file
 			Float3 pos;
 			Float3 normal;
@@ -216,9 +271,7 @@ namespace GS {
 			Float3 scale;
 			Quaternion rot;
 		};
-		void load(const char* file) {
-			gaussians.clear();
-
+		void Load(const char* file) {
 			//read gaussians
 			FILE* f;
 			fopen_s(&f, file, "r+b");
@@ -319,18 +372,18 @@ namespace GS {
 			return 0;
 		}
 	}
-}	
+}
 
-void GS::Init(const char* ply) {
+void GS::Load(const char* ply) {
 	//load gaussians
-	GSLoader::load(ply);
+	PLYLoader::Load(ply);
 	
 	//create sorter and wait for it to sort
 	SortThread::thread = CreateThread(NULL, 0, SortThread::entry, NULL, NULL, NULL);
 	ASSERT(SortThread::thread);
 	while (!SortThread::flagSorted) {}
 
-	//Create VBuffer
+	//Create vBuffer
 	D3D11_BUFFER_DESC vdesc = {};
 	vdesc.ByteWidth = gaussians.size() * sizeof(Gaussian);
 	vdesc.Usage = D3D11_USAGE_DYNAMIC;
@@ -356,7 +409,7 @@ void GS::Init(const char* ply) {
 
 void GS::Render() {
 	//Clear render target
-	const float color[] = { 0.0f , 0.0f , 0.0f, 0.0f };
+	const float color[] = { 0.0f, 0.0f, 0.0f, 0.0f };
 	pContext->ClearRenderTargetView(pTarget, color);
 
 	//Update constBuffer
@@ -397,11 +450,151 @@ void GS::Render() {
 }
 
 void GS::Clean() {
-	vBuffer->Release();
-
 	SortThread::flagExit = true;
 	WaitForSingleObject(SortThread::thread, INFINITE);
 
 	SortThread::flagExit = false;
 	SortThread::flagSorted = false;
+
+	gaussians.clear();
+	RELEASE(vBuffer);
+}
+
+//Mesh
+namespace Mesh {
+	struct Vertex { //matches vertexShader input
+		Float3 pos;
+		Float3 col;
+	};
+	vector<Vertex> vertices;
+	vector<unsigned int> indices;
+
+	namespace OBJLoader {
+		void Load(const char*) {
+			vertices.push_back({ {-1, 1, 5 }, {1, 0, 0} });
+			vertices.push_back({ {-1,-1, 5 }, {0, 1, 0} });
+			vertices.push_back({ { 1,-1, 5 }, {0, 0, 1} });
+			vertices.push_back({ { 1, 1, 5 }, {1, 1, 1} });
+			vertices.push_back({ {-1, 1, 7 }, {1, 0, 1} });
+			vertices.push_back({ {-1,-1, 7 }, {1, 1, 1} });
+			vertices.push_back({ { 1,-1, 7 }, {1, 1, 0} });
+			vertices.push_back({ { 1, 1, 7 }, {0, 1, 1} });
+
+			indices.push_back(0);
+			indices.push_back(1);
+			indices.push_back(2);
+			indices.push_back(0);
+			indices.push_back(2);
+			indices.push_back(3);
+
+			indices.push_back(4);
+			indices.push_back(6);
+			indices.push_back(5);
+			indices.push_back(4);
+			indices.push_back(7);
+			indices.push_back(6);
+
+			indices.push_back(0);
+			indices.push_back(4);
+			indices.push_back(5);
+			indices.push_back(0);
+			indices.push_back(5);
+			indices.push_back(1);
+
+			indices.push_back(3);
+			indices.push_back(6);
+			indices.push_back(7);
+			indices.push_back(3);
+			indices.push_back(2);
+			indices.push_back(6);
+
+			indices.push_back(1);
+			indices.push_back(5);
+			indices.push_back(6);
+			indices.push_back(1);
+			indices.push_back(6);
+			indices.push_back(2);
+
+			indices.push_back(0);
+			indices.push_back(7);
+			indices.push_back(4);
+			indices.push_back(0);
+			indices.push_back(3);
+			indices.push_back(7);
+		}
+	}
+}
+
+void Mesh::Extract() {
+	OBJLoader::Load("");
+
+	//Create vBuffer
+	D3D11_BUFFER_DESC vdesc = {};
+	vdesc.ByteWidth = vertices.size() * sizeof(Vertex);
+	vdesc.Usage = D3D11_USAGE_IMMUTABLE;
+	vdesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	D3D11_SUBRESOURCE_DATA vsubdata = {};
+	vsubdata.pSysMem = &vertices[0];
+	pDevice->CreateBuffer(&vdesc, &vsubdata, &vBuffer);
+
+	//Create iBuffer
+	D3D11_BUFFER_DESC idesc = {};
+	idesc.ByteWidth = indices.size() * sizeof(unsigned int);
+	idesc.Usage = D3D11_USAGE_IMMUTABLE;
+	idesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
+	D3D11_SUBRESOURCE_DATA isubdata = {};
+	isubdata.pSysMem = &indices[0];
+	pDevice->CreateBuffer(&idesc, &isubdata, &iBuffer);
+
+	//Bind stuff
+	pContext->OMSetBlendState(pBlend, NULL, 0xFFFFFF);
+	pContext->IASetInputLayout(il);
+	pContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	UINT stride = sizeof(Vertex);
+	UINT offset = 0;
+	pContext->IASetVertexBuffers(0, 1, &vBuffer, &stride, &offset);
+	pContext->IASetIndexBuffer(iBuffer, DXGI_FORMAT_R32_UINT, 0);
+
+	pContext->VSSetShader(vs, nullptr, 0u);
+	pContext->VSSetConstantBuffers(0, 1, &cBuffer);
+	pContext->GSSetShader(nullptr, nullptr, 0u);
+	pContext->PSSetShader(ps, nullptr, 0u);
+}
+
+void Mesh::Render() {
+	//Clear render target
+	const float color[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+	pContext->ClearRenderTargetView(pTarget, color);
+	pContext->ClearDepthStencilView(zBuffer, D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+	//Update constBuffer
+	struct cbuffer {
+		Matrix4 Proj; //no padding neccessary, already 16b alligned
+		Matrix4 View;
+	};
+
+	D3D11_MAPPED_SUBRESOURCE sub;
+	HR(pContext->Map(cBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &sub));
+
+	cbuffer* cbuf = (cbuffer*)sub.pData;
+	cbuf->Proj = camera.Proj();
+	cbuf->View = camera.View();
+
+	pContext->Unmap(cBuffer, 0);
+
+	//Set Render Target
+	pContext->OMSetRenderTargets(1u, &pTarget, zBuffer);
+
+	//Draw
+	pContext->DrawIndexed(indices.size(), 0u, 0);
+
+	//Present
+	pSwapChain->Present(0u, 0u);
+}
+
+void Mesh::Clean() {
+	vertices.clear();
+	indices.clear();
+	RELEASE(vBuffer);
+	RELEASE(iBuffer);
 }

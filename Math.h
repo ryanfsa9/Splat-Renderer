@@ -2,19 +2,6 @@
 
 #define PI 3.14159265359f
 
-//Integer Types
-
-typedef char int8;
-typedef short int16;
-typedef int int32;
-typedef long long int64;
-
-typedef unsigned char uint8;
-typedef unsigned short uint16;
-typedef unsigned int uint32;
-typedef unsigned long long uint64;
-
-
 //Vector Types
 
 template <typename T> class Vector2 {
@@ -146,9 +133,9 @@ public:
 typedef Vector2<float> Float2;
 typedef Vector3<float> Float3;
 typedef Vector4<float> Float4;
-typedef Vector2<int32> Int2;
-typedef Vector3<int32> Int3;
-typedef Vector4<int32> Int4;
+typedef Vector2<int> Int2;
+typedef Vector3<int> Int3;
+typedef Vector4<int> Int4;
 
 
 //Quaternions

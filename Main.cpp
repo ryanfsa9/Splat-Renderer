@@ -51,14 +51,14 @@ void TextBox(const char* msg) {
 bool KeyDown(char key) {
 		return GetAsyncKeyState(key) >> 15;
 	}
-bool FileDialog(char* buf256) {
+bool FileDialog(char* buf256, const char* filter) {
 	OPENFILENAMEA ofn = {};
 	ofn.lStructSize = sizeof(ofn);
 	ofn.hwndOwner = window.hWnd;
 	ofn.lpstrFile = buf256;
 	ofn.lpstrFile[0] = '\0';
 	ofn.nMaxFile = 256;
-	ofn.lpstrFilter = ".PLY\0*.PLY\0";
+	ofn.lpstrFilter = filter;
 	ofn.nFilterIndex = 0;
 	ofn.lpstrFileTitle = NULL;
 	ofn.nMaxFileTitle = 0;
@@ -87,11 +87,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 		int wmId = LOWORD(wParam);
 		switch (wmId)
 		{
-		case ID_OPEN_GS:
+		case ID_FILE_OPENSPLAT:
 			char buf[256];
-			if (FileDialog(buf)) {
+			if (FileDialog(buf, ".PLY\0*.PLY\0")) {
 				if (CleanCurrent) CleanCurrent();
-				GS::Init(buf);
+				GS::Load(buf);
 				RenderCurrent = GS::Render;
 				CleanCurrent = GS::Clean;
 
@@ -100,8 +100,11 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 				camera.pitch = 0;
 			}
 			break;
-		case ID_OPEN_MESH:
-			//
+		case ID_FILE_MESH:
+			if (CleanCurrent) CleanCurrent();
+			Mesh::Extract();
+			RenderCurrent = Mesh::Render;
+			CleanCurrent = Mesh::Clean;
 			break;
 		default:
 			return DefWindowProc(hWnd, msg, wParam, lParam);
@@ -179,8 +182,8 @@ int WINAPI WinMain(_In_ HINSTANCE hInst, _In_opt_ HINSTANCE hPrevInstance, _In_ 
 			if (KeyDown('S')) move.z -= 0.05f;
 			if (KeyDown('D')) move.x += 0.05f;
 			if (KeyDown('A')) move.x -= 0.05f;
-			if (KeyDown(VK_SHIFT)) move.y -= 0.05f;
-			if (KeyDown(VK_CONTROL)) move.y += 0.05f;
+			if (KeyDown(VK_SPACE)) move.y -= 0.05f;
+			if (KeyDown(VK_SHIFT)) move.y += 0.05f;
 			camera.pos += Matrix4::RotationY(-camera.yaw) * Matrix4::RotationX(-camera.pitch) * move;
 			//Camera Rotation
 			POINT lastPos = mousePos;

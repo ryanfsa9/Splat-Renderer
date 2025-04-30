@@ -11,7 +11,7 @@
 void Error(const char* file, int line, const char* msg);
 void HRError(long hr, const char* file, int line);
 void TextBox(const char* msg);
-bool keyDown(char key);
+bool KeyDown(char key);
 #define ASSERT(b) if(!(b)) { Error(__FILE__, __LINE__, ""); }
 #define ASSERTMSG(b, m) if(!(b)) { Error(__FILE__, __LINE__, m); }
 #define HR(b) if(b!=S_OK) HRError(b, __FILE__, __LINE__);
@@ -42,13 +42,13 @@ namespace Graphics {
 }
 
 namespace GS {
-	void Init(const char* ply);
+	void Load(const char* ply);
 	void Render();
 	void Clean();
 }
 
 namespace Mesh {
-	void Init(const char* obj);
+	void Extract();
 	void Render();
 	void Clean();
 }
