@@ -2,7 +2,7 @@ Author: Ryan Arlett (ryanarlett9@berkeley.edu)
 April-May 2025
 
 Description:
-This is the source code for a simple Win32 + DirectX11 based Gaussian Splatting (3DGS) renderer for rendering .ply files. It can also render meshes from .obj files.
+This is the source code for a simple Win32 + DirectX11 based Gaussian Splatting (3DGS) viewer for rendering .ply files. It can also render meshes from .obj files.
 I made this as part of a team project revolving around extracting meshes from 3DGS scenes.
 
 Contents:
@@ -20,7 +20,11 @@ Contents:
   
 -Mesh_Shaders.hlsl: A very simple vertex->pixel shader for rendering meshes with diffuse lighting.
 
-Acknowledgements:
+Compiling:
+I used Visual Studio with the windows and directx toolkits installed.
+Shaders are compiled at runtime so the hlsl files must be in the same directory as the executable when running.
+
+References:
 All the GS rendering math comes from this 2001 paper: https://www.cs.umd.edu/~zwicker/publications/EWAVolumeSplatting-VIS01.pdf
 This github (https://github.com/antimatter15/splat) was also incredibly helpful for seeing how to extract info from the ply files, as well as for the math in the GS shader. The idea to have a separate thread sort gaussians also comes from here. Unlike this github, however, I decided to have the gaussians themselves be the input to the vertex shader and to use a geometry shader to generate the quads, as that seemed like the more natural way to do it. 
 
