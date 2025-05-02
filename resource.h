@@ -4,7 +4,7 @@
 //
 #define IDR_MENU1                       101
 #define ID_FILE_OPENSPLAT               40001
-#define ID_FILE_MESH                    40002
+#define ID_FILE_OPENMESH                40002
 
 // Next default values for new objects
 // 

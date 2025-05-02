@@ -74,21 +74,21 @@ VOut vertexShader(VIn i)
     float2 eigenVector = normalize(float2(cov2d[0][1], eigen1 - cov2d[0][0]));
         
     //take sqrt to get standard deviation instead of var.
-    //min is to clamp extremely large gaussians that could result from the affine approx of J
+    //min is to clamp extremely large gaussians that could result from the affine approx J at low depth
     o.majorAxis = sqrt(min(eigen1, 1.0)) * eigenVector;
     o.minorAxis = sqrt(min(eigen2, 1.0)) * float2(-eigenVector.y, eigenVector.x);
     
     return o;
 }
 
-//Geometry Shader. Constructs oriented rectangles for each Gaussian based on output of vertexShader.
+//Geometry Shader. Constructs rotated quads for each Gaussian based on output of vertexShader. extends 2 stddivs from the center along each axis
 [maxvertexcount(6)]
 void geometryShader(point VOut i_[1], inout TriangleStream<GOut> o)
 {
     VOut i = i_[0];
     GOut g1, g2, g3, g4;
-    float4 right = float4(i.majorAxis, 0.0f, 0.0f) * 3;
-    float4 up = float4(i.minorAxis, 0.0f, 0.0f) * 3;
+    float4 right = float4(i.majorAxis, 0.0f, 0.0f) * 2;
+    float4 up = float4(i.minorAxis, 0.0f, 0.0f) * 2;
     g1.pos = i.pos - right - up;
     g2.pos = i.pos - right + up;
     g3.pos = i.pos + right + up;
@@ -116,7 +116,7 @@ void geometryShader(point VOut i_[1], inout TriangleStream<GOut> o)
 //Pixel Shader. Determines final color and alpha
 float4 pixelShader(GOut i) : SV_TARGET
 {
-    float d = dot(i.pos_local, i.pos_local);
-    float alpha = i.col.a * exp(-d);
+    float d = -0.5f * dot(i.pos_local, i.pos_local);
+    float alpha = i.col.a * exp(d);
     return float4(i.col.rgb * alpha, alpha);
 }

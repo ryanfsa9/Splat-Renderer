@@ -11,8 +11,6 @@
 #include <algorithm>
 using namespace std;
 
-#define RELEASE(x) { x->Release(); x = nullptr; }
-
 Matrix4 Camera::Proj() { //Coordinate space: Z forward, X right, Y down
 	float h = 1.0f / tan(fov_y / 2.0f);
 	float w = h * window.size.y / window.size.x;
@@ -27,6 +25,8 @@ Matrix4 Camera::Proj() { //Coordinate space: Z forward, X right, Y down
 Matrix4 Camera::View() {
 	return Matrix4::RotationX(pitch) * Matrix4::RotationY(yaw) * Matrix4::Translation(-pos);
 }
+
+#define RELEASE(x) { x->Release(); x = nullptr; }
 
 //Globals
 ID3D11Device* pDevice = nullptr;
@@ -136,7 +136,7 @@ void Graphics::InitGlobals() {
 	//Create IED
 	D3D11_INPUT_ELEMENT_DESC mesh_ied[2] = {
 		{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0                           , D3D11_INPUT_PER_VERTEX_DATA, 0 },
-		{ "COLOR",    0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+		{ "NORMAL",   0, DXGI_FORMAT_R32G32B32_FLOAT, 0, D3D11_APPEND_ALIGNED_ELEMENT, D3D11_INPUT_PER_VERTEX_DATA, 0 }
 	};
 
 	HR(pDevice->CreateInputLayout(mesh_ied, 2, pBlob->GetBufferPointer(), pBlob->GetBufferSize(), &Mesh::il));
@@ -462,71 +462,68 @@ void GS::Clean() {
 
 //Mesh
 namespace Mesh {
-	struct Vertex { //matches vertexShader input
+	struct Vertex {
 		Float3 pos;
-		Float3 col;
+		Float3 normal;
 	};
 	vector<Vertex> vertices;
 	vector<unsigned int> indices;
 
 	namespace OBJLoader {
-		void Load(const char*) {
-			vertices.push_back({ {-1, 1, 5 }, {1, 0, 0} });
-			vertices.push_back({ {-1,-1, 5 }, {0, 1, 0} });
-			vertices.push_back({ { 1,-1, 5 }, {0, 0, 1} });
-			vertices.push_back({ { 1, 1, 5 }, {1, 1, 1} });
-			vertices.push_back({ {-1, 1, 7 }, {1, 0, 1} });
-			vertices.push_back({ {-1,-1, 7 }, {1, 1, 1} });
-			vertices.push_back({ { 1,-1, 7 }, {1, 1, 0} });
-			vertices.push_back({ { 1, 1, 7 }, {0, 1, 1} });
+		void Load(const char* file) {
 
-			indices.push_back(0);
-			indices.push_back(1);
-			indices.push_back(2);
-			indices.push_back(0);
-			indices.push_back(2);
-			indices.push_back(3);
+			FILE* f;
+			fopen_s(&f, file, "r");
+			ASSERT(f);
 
-			indices.push_back(4);
-			indices.push_back(6);
-			indices.push_back(5);
-			indices.push_back(4);
-			indices.push_back(7);
-			indices.push_back(6);
+			char buf[256];
+			while (true) {
+				char* c = fgets(buf, 255, f);
+				if (c == nullptr) break;
 
-			indices.push_back(0);
-			indices.push_back(4);
-			indices.push_back(5);
-			indices.push_back(0);
-			indices.push_back(5);
-			indices.push_back(1);
+				if (c[0] == 'v' && c[1] == ' ') {
+					while (c[0] != ' ') c++; c++;
+					float x = stof(c);
+					while (c[0] != ' ') c++; c++;
+					float y = stof(c);
+					while (c[0] != ' ') c++; c++;
+					float z = stof(c);
 
-			indices.push_back(3);
-			indices.push_back(6);
-			indices.push_back(7);
-			indices.push_back(3);
-			indices.push_back(2);
-			indices.push_back(6);
+					Vertex v;
+					v.pos = Float3(x, -y, z);
 
-			indices.push_back(1);
-			indices.push_back(5);
-			indices.push_back(6);
-			indices.push_back(1);
-			indices.push_back(6);
-			indices.push_back(2);
+					vertices.push_back(v);
+				}
+				if (c[0] == 'f' && c[1] == ' ') {
+					while (c[0] != ' ') c++; c++;
+					int i1 = stoi(c) - 1;
+					while (c[0] != ' ') c++; c++;
+					int i2 = stoi(c) - 1;
+					while (c[0] != ' ') c++; c++;
+					int i3 = stoi(c) - 1;
 
-			indices.push_back(0);
-			indices.push_back(7);
-			indices.push_back(4);
-			indices.push_back(0);
-			indices.push_back(3);
-			indices.push_back(7);
+					indices.push_back(i1);
+					indices.push_back(i2);
+					indices.push_back(i3);
+
+					//compute vertex normals as average of all surrounding triangle normals
+					Float3 v13 = vertices[i3].pos - vertices[i1].pos;
+					Float3 v12 = vertices[i2].pos - vertices[i1].pos;
+					Float3 n = -v13.cross(v12);
+					vertices[i1].normal += n;
+					vertices[i2].normal += n;
+					vertices[i3].normal += n;
+				}
+			}
+			for (Vertex& v : vertices) {
+				v.normal /= sqrt(v.normal.dot(v.normal));
+			}
 		}
 	}
 }
 
-void Mesh::Extract() {
-	OBJLoader::Load("");
+void Mesh::Load(const char* obj) {
+	OBJLoader::Load(obj);
 
 	//Create vBuffer
 	D3D11_BUFFER_DESC vdesc = {};

@@ -7,26 +7,27 @@ cbuffer ConstantBuffer
 struct VIn
 {
     float3 pos : POSITION;
-    float3 col : COLOR;
+    float3 normal : NORMAL;
 };
 
 struct VOut
 {
     float4 pos : SV_POSITION;
-    float3 col : COLOR;
+    float3 normal : NORMAL;
 };
-
-//the scene lighting is already baked into the mesh colors, so these shaders are as simple as it gets.
 
 VOut vertexShader(VIn i)
 {
     VOut o;
     o.pos = mul(Proj, mul(View, float4(i.pos, 1.0f)));
-    o.col = i.col;
+    o.normal = i.normal;
 	return o;
 }
 
 float4 pixelShader(VOut i) : SV_TARGET
 {
-    return float4(i.col, 1.0f);
+    float3 sun = normalize(float3(1.0, 1.0, 1.0));
+    float l = 0.1f + dot(sun, i.normal);
+    l = clamp(l, 0.0, 1.0);
+    return float4(l, l, l, 1.0f);
 }

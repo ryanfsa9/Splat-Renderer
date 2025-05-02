@@ -48,7 +48,7 @@ namespace GS {
 }
 
 namespace Mesh {
-	void Extract();
+	void Load(const char* obj);
 	void Render();
 	void Clean();
 }

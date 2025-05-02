@@ -9,8 +9,26 @@ using namespace std;
 Window window;
 Camera camera;
 HINSTANCE hInst;
-void (*RenderCurrent)() = nullptr;
-void (*CleanCurrent)() = nullptr;
+
+enum Mode {
+	NONE,
+	SPLAT,
+	MESH
+};
+Mode mode = NONE;
+
+void CleanCurrent() {
+	if (mode == SPLAT) GS::Clean();
+	else if (mode == MESH) Mesh::Clean();
+}
+void RenderCurrent() {
+	if (mode == SPLAT) GS::Render();
+	else if (mode == MESH) Mesh::Render();
+}
+
+char GSFile[256];
+char MeshFile[256];
+
 
 //Helper Functions
 void Error(const char* file, int line, const char* msg) {
@@ -88,23 +106,26 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 		switch (wmId)
 		{
 		case ID_FILE_OPENSPLAT:
-			char buf[256];
-			if (FileDialog(buf, ".PLY\0*.PLY\0")) {
-				if (CleanCurrent) CleanCurrent();
-				GS::Load(buf);
-				RenderCurrent = GS::Render;
-				CleanCurrent = GS::Clean;
+			if (FileDialog(GSFile, ".PLY\0*.PLY\0")) {
+				CleanCurrent();
+				GS::Load(GSFile);
+				mode = SPLAT;
 
 				camera.pos = Float3(0, 0, 0);
 				camera.yaw = 0;
 				camera.pitch = 0;
 			}
 			break;
-		case ID_FILE_MESH:
-			if (CleanCurrent) CleanCurrent();
-			Mesh::Extract();
-			RenderCurrent = Mesh::Render;
-			CleanCurrent = Mesh::Clean;
+		case ID_FILE_OPENMESH:
+			if (FileDialog(MeshFile, ".OBJ\0*.OBJ\0")) {
+				CleanCurrent();
+				Mesh::Load(MeshFile);
+				mode = MESH;
+
+				camera.pos = Float3(0, 0, 0);
+				camera.yaw = 0;
+				camera.pitch = 0;
+			}
 			break;
 		default:
 			return DefWindowProc(hWnd, msg, wParam, lParam);
@@ -175,7 +196,20 @@ int WINAPI WinMain(_In_ HINSTANCE hInst, _In_opt_ HINSTANCE hPrevInstance, _In_ 
 
 	//Main Loop.
 	while (MessagePump()) {
-		if (RenderCurrent) {
+		if (mode != NONE) {
+			//Quick Swapping
+			if (KeyDown('X')) {
+				if (mode == SPLAT && MeshFile[0] != 0) {
+					GS::Clean();
+					Mesh::Load(MeshFile);
+					mode = MESH;
+				}
+				else if (mode == MESH && GSFile[0] != 0) {
+					Mesh::Clean();
+					GS::Load(GSFile);
+					mode = SPLAT;
+				}
+			}
 			//Camera Movement
 			Float3 move;
 			if (KeyDown('W')) move.z += 0.05f;
@@ -199,7 +233,7 @@ int WINAPI WinMain(_In_ HINSTANCE hInst, _In_opt_ HINSTANCE hPrevInstance, _In_ 
 			RenderCurrent();
 		}
 	}
-	if(CleanCurrent) CleanCurrent();
+	CleanCurrent();
 	Graphics::CleanGlobals();
 
 	return 0;
